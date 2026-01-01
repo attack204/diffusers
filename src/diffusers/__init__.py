@@ -1501,3 +1501,4 @@ else:
         module_spec=__spec__,
         extra_objects={"__version__": __version__},
     )
+print("🎯 Using diffusers!")

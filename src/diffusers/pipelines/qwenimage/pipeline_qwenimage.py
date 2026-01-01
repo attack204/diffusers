@@ -190,7 +190,13 @@ class QwenImagePipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         prompt: Union[str, List[str]] = None,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
+        save_embeddings: bool = True,
+        output_dir: str = "./prompt_embeddings",
     ):
+        print("\n" + "="*80)
+        print("🎯 PIPELINE TEXT_ENCODER CALLED: _get_qwen_prompt_embeds()")
+        print("="*80 + "\n")
+
         device = device or self._execution_device
         dtype = dtype or self.text_encoder.dtype
 
@@ -202,6 +208,8 @@ class QwenImagePipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         txt_tokens = self.tokenizer(
             txt, max_length=self.tokenizer_max_length + drop_idx, padding=True, truncation=True, return_tensors="pt"
         ).to(device)
+
+        print(f"📝 Calling text_encoder with prompt: {prompt[0][:100]}...")
         encoder_hidden_states = self.text_encoder(
             input_ids=txt_tokens.input_ids,
             attention_mask=txt_tokens.attention_mask,
@@ -221,6 +229,46 @@ class QwenImagePipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
 
+        print("\n" + "="*80)
+        print(f"✅ TEXT_ENCODER COMPLETED! Embeddings shape: {prompt_embeds.shape}")
+        print("="*80 + "\n")
+
+        # Save embeddings if requested
+        if save_embeddings:
+            import os
+            import json
+            from datetime import datetime
+
+            os.makedirs(output_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # Save embeddings as .pt file
+            save_data = {
+                "prompt_embeds": prompt_embeds.cpu(),
+                "encoder_attention_mask": encoder_attention_mask.cpu(),
+                "prompts": prompt,
+                "shape": list(prompt_embeds.shape),
+                "dtype": str(dtype),
+                "timestamp": timestamp,
+            }
+
+            pt_file = os.path.join(output_dir, f"prompt_embeds_{timestamp}.pt")
+            torch.save(save_data, pt_file)
+            print(f"💾 Embeddings saved to: {pt_file}")
+
+            # Save metadata as JSON
+            metadata = {
+                "prompts": prompt,
+                "shape": list(prompt_embeds.shape),
+                "dtype": str(dtype),
+                "timestamp": timestamp,
+                "file": pt_file,
+            }
+            json_file = os.path.join(output_dir, f"prompt_embeds_{timestamp}.json")
+            with open(json_file, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+            print(f"📄 Metadata saved to: {json_file}")
+
         return prompt_embeds, encoder_attention_mask
 
     def encode_prompt(
@@ -231,6 +279,7 @@ class QwenImagePipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         prompt_embeds: Optional[torch.Tensor] = None,
         prompt_embeds_mask: Optional[torch.Tensor] = None,
         max_sequence_length: int = 1024,
+        save_embeddings: bool = True,
     ):
         r"""
 
@@ -244,14 +293,20 @@ class QwenImagePipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             prompt_embeds (`torch.Tensor`, *optional*):
                 Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
                 provided, text embeddings will be generated from `prompt` input argument.
+            save_embeddings (`bool`, *optional*, defaults to `True`):
+                Whether to save the embeddings to disk. Set to False for negative prompts.
         """
+        print("\n" + "="*80)
+        print("🎯 ENCODE_PROMPT CALLED in QwenImagePipeline")
+        print("="*80 + "\n")
+
         device = device or self._execution_device
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt) if prompt_embeds is None else prompt_embeds.shape[0]
 
         if prompt_embeds is None:
-            prompt_embeds, prompt_embeds_mask = self._get_qwen_prompt_embeds(prompt, device)
+            prompt_embeds, prompt_embeds_mask = self._get_qwen_prompt_embeds(prompt, device, save_embeddings=save_embeddings)
 
         prompt_embeds = prompt_embeds[:, :max_sequence_length]
         prompt_embeds_mask = prompt_embeds_mask[:, :max_sequence_length]
@@ -619,6 +674,7 @@ class QwenImagePipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 device=device,
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
+                save_embeddings=False,
             )
 
         # 4. Prepare latent variables
